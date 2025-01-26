@@ -33,11 +33,9 @@ def fetch_schedule():
     else:
         raise Exception(f"Failed to fetch schedule: {response.status_code} {response.reason}")
 
-
 def save_cache(data):
     with open(CACHE_FILE, "w") as f:
         json.dump(data, f)
-
 
 def load_cache():
     if os.path.exists(CACHE_FILE):
@@ -45,20 +43,18 @@ def load_cache():
             return json.load(f)
     return None
 
-
 def assign_scouting(schedule, members, min_teams, min_members):
     """
     1) Build 'team_assignments' ignoring EXCLUDED_TEAMS.
     2) Assign each non-excluded team to members to satisfy min_members, then min_teams.
     3) Purge EXCLUDED_TEAMS from final assignments if they slip in.
+    Contains debug prints for diagnosing assignment logic.
     """
     print("DEBUG: Building assignments for non-excluded teams...")
     assignments = {member: [] for member in members}
     team_assignments = {}
 
-    # Gather all non-excluded teams from schedule
     for match in schedule:
-        # match is the normal row structure with possible breaks inserted
         if match["matchNumber"] not in ["Lunch Break", "Overnight"]:
             for team in match["teams"]:
                 if team not in EXCLUDED_TEAMS:
@@ -68,7 +64,6 @@ def assign_scouting(schedule, members, min_teams, min_members):
     print(f"DEBUG: Found {len(team_assignments)} non-excluded teams: {list(team_assignments.keys())}\n")
 
     members_cycle = cycle(members)
-    # min_members coverage
     for team in team_assignments:
         while len(team_assignments[team]) < min_members:
             member = next(members_cycle)
@@ -81,7 +76,7 @@ def assign_scouting(schedule, members, min_teams, min_members):
     for m in assignments:
         print(f"  {m}: {assignments[m]}")
 
-    # min_teams coverage
+    # Ensure each member has at least min_teams
     teams_cycle = cycle(team_assignments.keys())
     for member in assignments:
         while len(assignments[member]) < min_teams:
@@ -116,24 +111,14 @@ def generate_member_schedule(
     generation_info,
     full_assignments
 ):
-    """
-    Per-member schedule. We do the normal date/gap logic with priority:
-      - If date changes => Overnight row
-      - Else if big gap => Lunch Break row
-    Then if a row is 'Lunch Break' or 'Overnight', the next match's gap = that label
-      (no minutes).
-
-    We also show other assigned members for the top 'Assigned Teams' section.
-    """
     member_schedule = []
     previous_assigned_match_time = None
     previous_assigned_match_index = None
-    last_break_inserted = None  # track if the last row we inserted was a break
+    last_break_inserted = None
 
     # Build (team -> other members) structure for the top "Assigned Teams"
     assigned_teams_info = []
     for t in assigned_teams:
-        # find which other members also have t
         also_members = []
         for other_m, tlist in full_assignments.items():
             if other_m != member and t in tlist:
@@ -144,7 +129,6 @@ def generate_member_schedule(
             assigned_teams_info.append((t, ""))
 
     for i, match in enumerate(schedule):
-        # if it's a real match
         if match["matchNumber"] not in ["Lunch Break", "Overnight"]:
             assigned_team_for_this_member = None
             for tm in match["teams"]:
@@ -153,13 +137,12 @@ def generate_member_schedule(
                     break
 
             if assigned_team_for_this_member:
-                # Check for date/gap logic
                 match_time = datetime.strptime(match["time"], "%Y-%m-%dT%H:%M:%S")
 
+                # Insert row for lunch break or overnight if needed
                 if previous_assigned_match_time is not None:
-                    # Priority: if date changed => Overnight
+                    gap_minutes = (match_time - previous_assigned_match_time).total_seconds() / 60
                     if match_time.date() != previous_assigned_match_time.date():
-                        # Insert an 'Overnight' row
                         member_schedule.append({
                             "matchNumber": "Overnight",
                             "time": "",
@@ -168,8 +151,6 @@ def generate_member_schedule(
                         })
                         last_break_inserted = "Overnight"
                     else:
-                        # Check if big gap => Lunch Break
-                        gap_minutes = (match_time - previous_assigned_match_time).total_seconds() / 60
                         if gap_minutes >= LUNCH_BREAK_THRESHOLD_MINUTES:
                             member_schedule.append({
                                 "matchNumber": "Lunch Break",
@@ -184,13 +165,12 @@ def generate_member_schedule(
                     last_break_inserted = None
 
                 # compute gap for this match
+                gap = None
                 if last_break_inserted in ["Overnight", "Lunch Break"]:
-                    # if we just inserted a break row, gap = that label
+                    # if we just inserted a break => label this match's gap as that
                     gap = last_break_inserted
                 else:
-                    gap = None
                     if previous_assigned_match_time is not None:
-                        # consecutive?
                         if (
                             previous_assigned_match_index is not None and
                             match["matchNumber"] == schedule[previous_assigned_match_index]["matchNumber"] + 1
@@ -198,22 +178,20 @@ def generate_member_schedule(
                             gap = "N/A"
                         else:
                             gap_start = previous_assigned_match_time
-                            # if there's a truly skipped match
                             if previous_assigned_match_index is not None and (previous_assigned_match_index + 1) < i:
                                 gap_start_time_str = schedule[previous_assigned_match_index + 1]["time"]
                                 gap_start = datetime.strptime(gap_start_time_str, "%Y-%m-%dT%H:%M:%S")
 
                             if gap_start:
-                                diff = (match_time - gap_start).total_seconds() / 60
-                                if diff > GAP_UNDERLINE_THRESHOLD_MINUTES:
-                                    gap = f"<span style='text-decoration: underline;'>{diff:.0f} minutes</span>"
+                                gap_diff = (match_time - gap_start).total_seconds() / 60
+                                if gap_diff > GAP_UNDERLINE_THRESHOLD_MINUTES:
+                                    gap = f"<span style='text-decoration: underline;'>{gap_diff:.0f} minutes</span>"
                                 else:
-                                    gap = f"{diff:.0f} minutes"
+                                    gap = f"{gap_diff:.0f} minutes"
 
-                    if gap is None:
-                        gap = "N/A"
+                if gap is None:
+                    gap = "N/A"
 
-                # style the teams
                 used_underline = False
                 styled_teams = []
                 for t in match["teams"]:
@@ -238,13 +216,11 @@ def generate_member_schedule(
                 previous_assigned_match_index = i
 
         else:
-            # The row is already a break row for overall, skip it here
-            # or you could do something else if you prefer. Usually we skip.
-            # If you want to also show these in the individual's schedule, you can do so. 
-            # For now let's keep it consistent with your code that only does break logic in the individual's side.
+            # skip the break rows in schedule for individual, 
+            # we rely on our own code to insert them above
+            # or you can do something else if you prefer
             pass
 
-    # Render with jinja2
     template = Template(r"""
 <!DOCTYPE html>
 <html lang="en">
@@ -317,11 +293,10 @@ def generate_member_schedule(
         generation_info=generation_info
     )
 
-
 def generate_overall_schedule(schedule, assignments, team_assignments, generation_info):
     """
-    Priority: If date changed => Overnight, else if big gap => Lunch Break
-    Then append normal row with assigned members
+    Insert 'Overnight' if date changes, else 'Lunch Break' if gap >= threshold, then
+    normal match row with assigned members. Overnight has priority.
     """
     annotated_schedule = []
     previous_match_time = None
@@ -329,29 +304,28 @@ def generate_overall_schedule(schedule, assignments, team_assignments, generatio
     for match in schedule:
         match_time = datetime.strptime(match["time"], "%Y-%m-%dT%H:%M:%S")
         if previous_match_time:
-            # Overnight check first
+            # Priority: if date changes => Overnight
             if match_time.date() != previous_match_time.date():
                 annotated_schedule.append({
                     "matchNumber": "Overnight",
                     "time": "",
                     "teams": [],
-                    "assignedMembers": []
+                    "assignedMembers": [],
                 })
-            # else check big gap => lunch
             elif (match_time - previous_match_time).total_seconds() / 60 >= LUNCH_BREAK_THRESHOLD_MINUTES:
                 annotated_schedule.append({
                     "matchNumber": "Lunch Break",
                     "time": "",
                     "teams": [],
-                    "assignedMembers": []
+                    "assignedMembers": [],
                 })
 
         overall_assigned = []
-        for team in match["teams"]:
-            if team in team_assignments:
-                overall_assigned.append(f"<u>Team {team}</u>: {', '.join(team_assignments[team])}")
+        for t in match["teams"]:
+            if t in team_assignments:
+                overall_assigned.append(f"<u>Team {t}</u>: {', '.join(team_assignments[t])}")
             else:
-                overall_assigned.append(f"<i>Team {team} (Excluded)</i>")
+                overall_assigned.append(f"<i>Team {t} (Excluded)</i>")
 
         annotated_schedule.append({
             "matchNumber": match["matchNumber"],
@@ -362,7 +336,6 @@ def generate_overall_schedule(schedule, assignments, team_assignments, generatio
 
         previous_match_time = match_time
 
-    # Now render annotated_schedule
     template = Template(r"""
 <!DOCTYPE html>
 <html lang="en">
@@ -390,14 +363,14 @@ def generate_overall_schedule(schedule, assignments, team_assignments, generatio
             </tr>
         </thead>
         <tbody>
-        {% for row in annotated_schedule %}
-            <tr class="{% if row.matchNumber in ['Overnight', 'Lunch Break'] %}break{% endif %}">
-                <td>{{ row.matchNumber }}</td>
-                <td>{{ row.time }}</td>
-                <td>{{ row.teams|join(', ') }}</td>
-                <td>{{ row.assignedMembers|join('<br>')|safe }}</td>
+            {% for m in annotated_schedule %}
+            <tr class="{% if m.matchNumber in ['Lunch Break', 'Overnight'] %}break{% endif %}">
+                <td>{{ m.matchNumber }}</td>
+                <td>{{ m.time }}</td>
+                <td>{{ m.teams|join(', ') }}</td>
+                <td>{{ m.assignedMembers|join('<br>')|safe }}</td>
             </tr>
-        {% endfor %}
+            {% endfor %}
         </tbody>
     </table>
 
@@ -433,18 +406,27 @@ def main():
         if data:
             mtime = os.path.getmtime(CACHE_FILE)
             cache_time_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-            generation_info = f"Used cache from {cache_time_str}, generated at {now_str}, event: {EVENT_CODE}, year: {SEASON}"
+            generation_info = (
+                f"Used cache from {cache_time_str}, generated at {now_str}, "
+                f"event: {EVENT_CODE}, year: {SEASON}"
+            )
         else:
             print("No cache found. Fetching data from API.")
             data = fetch_schedule()
             save_cache(data)
-            generation_info = f"No valid cache. Fresh fetch at {now_str}, event: {EVENT_CODE}, year: {SEASON}"
+            generation_info = (
+                f"No valid cache. Fresh fetch at {now_str}, "
+                f"event: {EVENT_CODE}, year: {SEASON}"
+            )
     else:
         data = fetch_schedule()
         save_cache(data)
-        generation_info = f"Fetched new data at {now_str}, event: {EVENT_CODE}, year: {SEASON}"
+        generation_info = (
+            f"Fetched new data at {now_str}, "
+            f"event: {EVENT_CODE}, year: {SEASON}"
+        )
 
-    # Build the schedule from API
+    # Build the raw schedule from FRC API data
     schedule = [
         {
             "matchNumber": match["matchNumber"],
@@ -464,13 +446,16 @@ def main():
         MIN_MEMBERS_PER_TEAM
     )
 
-    # Generate overall
+    # Generate overall schedule
     overall_html = generate_overall_schedule(schedule, assignments, team_assignments, generation_info)
-    with open("overall_schedule.html", "w") as f:
-        f.write(overall_html)
-    print("Generated overall schedule: overall_schedule.html")
 
-    # Generate each individual's schedule
+    # new name: overall_schedule_{EVENT_CODE}_{SEASON}.html
+    overall_filename = f"overall_schedule_{EVENT_CODE}_{SEASON}.html"
+    with open(overall_filename, "w") as f:
+        f.write(overall_html)
+    print(f"Generated overall schedule: {overall_filename}")
+
+    # Generate each individual's schedule with new naming
     for member in SCOUTING_MEMBERS:
         member_schedule_html = generate_member_schedule(
             member=member,
@@ -480,10 +465,13 @@ def main():
             generation_info=generation_info,
             full_assignments=assignments
         )
-        file_name = f"{member.replace(' ', '_').lower()}_schedule.html"
+        # e.g. individual_肖予涵_BCVI_2024_schedule.html
+        safe_name = member.replace(' ', '_')
+        file_name = f"individual_{safe_name}_{EVENT_CODE}_{SEASON}_schedule.html"
         with open(file_name, "w") as f:
             f.write(member_schedule_html)
         print(f"Generated schedule for {member}: {file_name}")
+
 
 if __name__ == "__main__":
     main()
