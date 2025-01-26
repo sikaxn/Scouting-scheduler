@@ -8,6 +8,8 @@ This script helps generate scouting schedules for an FRC (FIRST Robotics Competi
 ## This  software contain AI generated content
 
  Use at your precaution.
+## Slide 1
+![Slide 1](images/Slide1.jpeg)
 
 ## Slide 2
 ![Slide 2](images/Slide2.jpeg)
@@ -33,6 +35,8 @@ This script helps generate scouting schedules for an FRC (FIRST Robotics Competi
 ## Slide 9
 ![Slide 9](images/Slide9.jpeg)
 
+## Slide 10
+![Slide 10](images/Slide10.jpeg)
 
 ## Slide 11
 ![Slide 11](images/Slide11.jpeg)
@@ -49,6 +53,11 @@ This script helps generate scouting schedules for an FRC (FIRST Robotics Competi
 ## Slide 15
 ![Slide 15](images/Slide15.jpeg)
 
+## Slide 16
+![Slide 16](images/Slide16.jpeg)
+
+## Slide 17
+![Slide 17](images/Slide17.jpeg)
 
 ## Key Features
 
