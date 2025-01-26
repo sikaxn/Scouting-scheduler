@@ -5,6 +5,10 @@ This script helps generate scouting schedules for an FRC (FIRST Robotics Competi
 1. An **overall schedule** (including assigned members for each match).  
 2. **Individual schedules** for each member, showing exactly which team they should scout in each match.
 
+## This  software contain AI generated content
+
+ Use at your precaution.
+
 ## Slide 2
 ![Slide 2](images/Slide2.jpeg)
 
