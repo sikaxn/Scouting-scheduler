@@ -100,11 +100,22 @@ def assign_scouting(schedule, members, min_teams, min_members):
 
     return assignments, team_assignments
 
-
 def generate_member_schedule(member, schedule, team_assignments, assigned_teams, generation_info):
+    """
+    1. Exactly one team underlined per match if assigned_teams has multiple (pick first).
+    2. Excluded teams appear in italics but never assigned.
+    3. Insert 'Lunch Break' or 'Overnight' row if needed.
+    4. If a match is immediately after 'Lunch Break' or 'Overnight', set its gap to 'Lunch Break'/'Overnight' (and don't calculate minutes).
+    5. Keep color styling for assigned teams.
+    6. Title includes date/time and cache usage info.
+    """
+
     member_schedule = []
     previous_assigned_match_time = None
     previous_assigned_match_index = None
+
+    # We'll track whether the *last row* we inserted was a 'Lunch Break' or 'Overnight'
+    last_break_inserted = None  # can be "Lunch Break", "Overnight", or None
 
     for i, match in enumerate(schedule):
         assigned_team_for_this_member = None
@@ -116,7 +127,7 @@ def generate_member_schedule(member, schedule, team_assignments, assigned_teams,
         if assigned_team_for_this_member:
             match_time = datetime.strptime(match["time"], "%Y-%m-%dT%H:%M:%S")
 
-            # Insert lunch break or overnight
+            # Insert row for lunch break or overnight if needed
             if previous_assigned_match_time is not None:
                 gap_minutes = (match_time - previous_assigned_match_time).total_seconds() / 60
                 if match_time.date() != previous_assigned_match_time.date():
@@ -126,6 +137,7 @@ def generate_member_schedule(member, schedule, team_assignments, assigned_teams,
                         "gap": "",
                         "teams": []
                     })
+                    last_break_inserted = "Overnight"
                 elif gap_minutes >= LUNCH_BREAK_THRESHOLD_MINUTES:
                     member_schedule.append({
                         "matchNumber": "Lunch Break",
@@ -133,31 +145,45 @@ def generate_member_schedule(member, schedule, team_assignments, assigned_teams,
                         "gap": "",
                         "teams": []
                     })
+                    last_break_inserted = "Lunch Break"
+                else:
+                    last_break_inserted = None
+            else:
+                # If this is the first match assigned to the member, no gap
+                last_break_inserted = None
 
-            # Gap
+            # Now compute the gap for THIS match
             gap = None
             if previous_assigned_match_time is not None:
-                if (
-                    previous_assigned_match_index is not None and
-                    match["matchNumber"] == schedule[previous_assigned_match_index]["matchNumber"] + 1
-                ):
-                    gap = "N/A"
+                # If the preceding row was 'Lunch Break' or 'Overnight', just replicate that in gap
+                if last_break_inserted in ["Lunch Break", "Overnight"]:
+                    gap = last_break_inserted
                 else:
-                    gap_start = None
-                    gap_end = match_time
-                    if previous_assigned_match_index is not None and (previous_assigned_match_index + 1) < i:
-                        gap_start_str = schedule[previous_assigned_match_index + 1]["time"]
-                        gap_start = datetime.strptime(gap_start_str, "%Y-%m-%dT%H:%M:%S")
+                    # Normal gap calculation
+                    if (
+                        previous_assigned_match_index is not None and
+                        match["matchNumber"] == schedule[previous_assigned_match_index]["matchNumber"] + 1
+                    ):
+                        gap = "N/A"
                     else:
-                        gap_start = previous_assigned_match_time
-                    if gap_start:
-                        gap_diff = (gap_end - gap_start).total_seconds() / 60
-                        if gap_diff > GAP_UNDERLINE_THRESHOLD_MINUTES:
-                            gap = f"<span style='text-decoration: underline;'>{gap_diff:.0f} minutes</span>"
+                        gap_start = None
+                        gap_end = match_time
+                        if previous_assigned_match_index is not None and (previous_assigned_match_index + 1) < i:
+                            gap_start_str = schedule[previous_assigned_match_index + 1]["time"]
+                            gap_start = datetime.strptime(gap_start_str, "%Y-%m-%dT%H:%M:%S")
                         else:
-                            gap = f"{gap_diff:.0f} minutes"
+                            gap_start = previous_assigned_match_time
+                        if gap_start:
+                            gap_diff = (gap_end - gap_start).total_seconds() / 60
+                            if gap_diff > GAP_UNDERLINE_THRESHOLD_MINUTES:
+                                gap = f"<span style='text-decoration: underline;'>{gap_diff:.0f} minutes</span>"
+                            else:
+                                gap = f"{gap_diff:.0f} minutes"
+            # If there's no previous assigned match, it's first match -> "N/A" gap
+            if gap is None:
+                gap = "N/A"
 
-            # Style
+            # Build styled team list
             styled_teams = []
             used_underline = False
             for t in match["teams"]:
@@ -174,14 +200,14 @@ def generate_member_schedule(member, schedule, team_assignments, assigned_teams,
             member_schedule.append({
                 "matchNumber": match["matchNumber"],
                 "time": match["time"],
-                "gap": gap or "N/A",
+                "gap": gap,
                 "teams": styled_teams,
             })
 
             previous_assigned_match_time = match_time
             previous_assigned_match_index = i
 
-    # NOTE: Removed 'f' from the raw string
+    # Render HTML
     template = Template(r"""
 <!DOCTYPE html>
 <html lang="en">
@@ -244,7 +270,6 @@ def generate_member_schedule(member, schedule, team_assignments, assigned_teams,
 """)
 
     return template.render(member=member, member_schedule=member_schedule, assigned_teams=assigned_teams, generation_info=generation_info)
-
 
 def generate_overall_schedule(schedule, assignments, team_assignments, generation_info):
     annotated_schedule = []
